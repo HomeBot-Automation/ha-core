@@ -84,7 +84,8 @@ STEP_ID_OPTIONAL_STEPS = {
 }
 
 
-_FlowResultT = TypeVar("_FlowResultT", bound="FlowResult")
+_FlowResultT = TypeVar("_FlowResultT", bound="BaseFlowResult")
+_HandlerT = TypeVar("_HandlerT")
 
 
 @dataclass(slots=True)
@@ -137,7 +138,7 @@ class AbortFlow(FlowError):
         self.description_placeholders = description_placeholders
 
 
-class FlowResult(TypedDict, total=False):
+class BaseFlowResult(Generic[_HandlerT], TypedDict, total=False):
     """Typed result dict."""
 
     context: dict[str, Any]
@@ -148,7 +149,7 @@ class FlowResult(TypedDict, total=False):
     errors: dict[str, str] | None
     extra: str
     flow_id: Required[str]
-    handler: Required[str]
+    handler: Required[_HandlerT]
     last_step: bool | None
     menu_options: list[str] | dict[str, str]
     options: Mapping[str, Any]
@@ -163,6 +164,10 @@ class FlowResult(TypedDict, total=False):
     translation_domain: str
     type: FlowResultType
     url: str
+
+
+class FlowResult(BaseFlowResult[str], total=False):
+    """Typed result dict."""
 
 
 def _map_error_to_schema_errors(
@@ -188,7 +193,7 @@ def _map_error_to_schema_errors(
     schema_errors[path_part_str] = error.error_message
 
 
-class BaseFlowManager(abc.ABC, Generic[_FlowResultT]):
+class BaseFlowManager(abc.ABC, Generic[_FlowResultT, _HandlerT]):
     """Manage all the flows that are in progress."""
 
     _flow_result: Callable[..., _FlowResultT]
@@ -201,17 +206,17 @@ class BaseFlowManager(abc.ABC, Generic[_FlowResultT]):
         self.hass = hass
         self._preview: set[str] = set()
         self._progress: dict[str, BaseFlowHandler] = {}
-        self._handler_progress_index: dict[str, set[BaseFlowHandler]] = {}
+        self._handler_progress_index: dict[_HandlerT, set[BaseFlowHandler]] = {}
         self._init_data_process_index: dict[type, set[BaseFlowHandler]] = {}
 
     @abc.abstractmethod
     async def async_create_flow(
         self,
-        handler_key: str,
+        handler_key: _HandlerT,
         *,
         context: dict[str, Any] | None = None,
         data: dict[str, Any] | None = None,
-    ) -> BaseFlowHandler[_FlowResultT]:
+    ) -> BaseFlowHandler[_FlowResultT, _HandlerT]:
         """Create a flow for specified handler.
 
         Handler key is the domain of the component that we want to set up.
@@ -230,7 +235,7 @@ class BaseFlowManager(abc.ABC, Generic[_FlowResultT]):
 
     @callback
     def async_has_matching_flow(
-        self, handler: str, match_context: dict[str, Any], data: Any
+        self, handler: _HandlerT, match_context: dict[str, Any], data: Any
     ) -> bool:
         """Check if an existing matching flow is in progress.
 
@@ -264,7 +269,7 @@ class BaseFlowManager(abc.ABC, Generic[_FlowResultT]):
     @callback
     def async_progress_by_handler(
         self,
-        handler: str,
+        handler: _HandlerT,
         include_uninitialized: bool = False,
         match_context: dict[str, Any] | None = None,
     ) -> list[_FlowResultT]:
@@ -297,8 +302,8 @@ class BaseFlowManager(abc.ABC, Generic[_FlowResultT]):
 
     @callback
     def _async_progress_by_handler(
-        self, handler: str, match_context: dict[str, Any] | None
-    ) -> list[BaseFlowHandler[_FlowResultT]]:
+        self, handler: _HandlerT, match_context: dict[str, Any] | None
+    ) -> list[BaseFlowHandler[_FlowResultT, _HandlerT]]:
         """Return the flows in progress by handler.
 
         If match_context is specified, only return flows with a context that
@@ -314,7 +319,11 @@ class BaseFlowManager(abc.ABC, Generic[_FlowResultT]):
         ]
 
     async def async_init(
-        self, handler: str, *, context: dict[str, Any] | None = None, data: Any = None
+        self,
+        handler: _HandlerT,
+        *,
+        context: dict[str, Any] | None = None,
+        data: Any = None,
     ) -> _FlowResultT:
         """Start a data entry flow."""
         if context is None:
@@ -444,7 +453,9 @@ class BaseFlowManager(abc.ABC, Generic[_FlowResultT]):
         self._async_remove_flow_progress(flow_id)
 
     @callback
-    def _async_add_flow_progress(self, flow: BaseFlowHandler[_FlowResultT]) -> None:
+    def _async_add_flow_progress(
+        self, flow: BaseFlowHandler[_FlowResultT, _HandlerT]
+    ) -> None:
         """Add a flow to in progress."""
         if flow.init_data is not None:
             init_data_type = type(flow.init_data)
@@ -454,7 +465,7 @@ class BaseFlowManager(abc.ABC, Generic[_FlowResultT]):
 
     @callback
     def _async_remove_flow_from_index(
-        self, flow: BaseFlowHandler[_FlowResultT]
+        self, flow: BaseFlowHandler[_FlowResultT, _HandlerT]
     ) -> None:
         """Remove a flow from in progress."""
         if flow.init_data is not None:
@@ -481,7 +492,7 @@ class BaseFlowManager(abc.ABC, Generic[_FlowResultT]):
 
     async def _async_handle_step(
         self,
-        flow: BaseFlowHandler[_FlowResultT],
+        flow: BaseFlowHandler[_FlowResultT, _HandlerT],
         step_id: str,
         user_input: dict | BaseServiceInfo | None,
     ) -> _FlowResultT:
@@ -595,13 +606,13 @@ class BaseFlowManager(abc.ABC, Generic[_FlowResultT]):
         return results
 
 
-class FlowManager(BaseFlowManager[FlowResult]):
+class FlowManager(BaseFlowManager[FlowResult, str]):
     """Manage all the flows that are in progress."""
 
     _flow_result = FlowResult
 
 
-class BaseFlowHandler(Generic[_FlowResultT]):
+class BaseFlowHandler(Generic[_FlowResultT, _HandlerT]):
     """Handle a data entry flow."""
 
     _flow_result: Callable[..., _FlowResultT]
@@ -613,7 +624,7 @@ class BaseFlowHandler(Generic[_FlowResultT]):
     # and removes the need for constant None checks or asserts.
     flow_id: str = None  # type: ignore[assignment]
     hass: HomeAssistant = None  # type: ignore[assignment]
-    handler: str = None  # type: ignore[assignment]
+    handler: _HandlerT = None  # type: ignore[assignment]
     # Ensure the attribute has a subscriptable, but immutable, default value.
     context: dict[str, Any] = MappingProxyType({})  # type: ignore[assignment]
 
@@ -881,7 +892,7 @@ class BaseFlowHandler(Generic[_FlowResultT]):
         self.__progress_task = progress_task
 
 
-class FlowHandler(BaseFlowHandler[FlowResult]):
+class FlowHandler(BaseFlowHandler[FlowResult, str]):
     """Handle a data entry flow."""
 
     _flow_result = FlowResult

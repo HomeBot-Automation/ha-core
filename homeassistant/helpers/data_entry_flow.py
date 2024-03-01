@@ -54,7 +54,7 @@ class FlowManagerIndexView(_BaseFlowManagerView):
     @RequestDataValidator(
         vol.Schema(
             {
-                vol.Required("handler"): vol.Any(str, list),
+                vol.Required("handler"): str,
                 vol.Optional("show_advanced_options", default=False): cv.boolean,
             },
             extra=vol.ALLOW_EXTRA,
@@ -72,14 +72,9 @@ class FlowManagerIndexView(_BaseFlowManagerView):
         self, request: web.Request, data: dict[str, Any]
     ) -> web.Response:
         """Handle a POST request."""
-        if isinstance(data["handler"], list):
-            handler = tuple(data["handler"])
-        else:
-            handler = data["handler"]
-
         try:
             result = await self._flow_mgr.async_init(
-                handler,  # type: ignore[arg-type]
+                data["handler"],
                 context=self.get_context(data),
             )
         except data_entry_flow.UnknownHandler:

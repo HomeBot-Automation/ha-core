@@ -48,7 +48,9 @@ class ConfirmRepairFlow(RepairsFlow):
         )
 
 
-class RepairsFlowManager(data_entry_flow.BaseFlowManager[data_entry_flow.FlowResult]):
+class RepairsFlowManager(
+    data_entry_flow.BaseFlowManager[data_entry_flow.FlowResult, str]
+):
     """Manage repairs flows."""
 
     _flow_result = data_entry_flow.FlowResult
